@@ -10,6 +10,7 @@ use Illuminate\Validation\Rule;
 class BaseController extends Controller
 {
     protected $model;
+    protected $resource;
     protected $perPage = 10;
     protected $filterKey = 'user_id';
 

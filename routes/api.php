@@ -31,6 +31,11 @@ use App\Http\Controllers\Api\DigitalOccurrenceLogController;
 use App\Http\Controllers\Api\TimezoneController;
 use App\Http\Controllers\Api\LiveOperationController;
 use App\Http\Controllers\Api\WorkerGeofenceController;
+use App\Http\Controllers\Api\WorkerController;
+use App\Http\Controllers\Api\SupervisorController;
+use App\Http\Controllers\Api\AlertController;
+use App\Http\Controllers\Api\CustomerInvoiceController;
+use App\Http\Controllers\Api\StatisticsController;
 
 Route::prefix('auth')->group(function () {
     Route::middleware(['throttle:login', 'check.honeypot'])->post('login', [AuthController::class, 'login']);
@@ -66,8 +71,35 @@ Route::get('timezones', [TimezoneController::class, 'index']);
         });
 
         Route::prefix('admin')->group(function () {
-            Route::get('system-statistics', [\App\Http\Controllers\Api\StatisticsController::class, 'index'])->name('admin.statistics');
+            Route::get('system-statistics', [StatisticsController::class, 'index'])->name('admin.statistics');
+            Route::get('activities', [StatisticsController::class, 'activities'])->name('admin.activities');
+            Route::get('system-logs', [StatisticsController::class, 'systemLogs'])->name('admin.system_logs');
+            Route::get('clock-in-questionnaires', [FormController::class, 'clockInQuestionnaires'])->name('admin.clock_in_questionnaires');
+
+            Route::prefix('alerts')->group(function () {
+                Route::get('', [AlertController::class, 'index'])->name('admin.alerts.list');
+                Route::post('read-all', [AlertController::class, 'markAllRead'])->name('admin.alerts.read_all');
+                Route::post('{id}/read', [AlertController::class, 'markRead'])->name('admin.alerts.read');
+                Route::delete('{id}', [AlertController::class, 'destroy'])->name('admin.alerts.delete');
+            });
+
+            Route::prefix('occurrence-logs')->group(function () {
+                Route::get('', [DigitalOccurrenceLogController::class, 'index'])->name('admin.occurrence_log.list');
+                Route::post('', [DigitalOccurrenceLogController::class, 'store'])->name('admin.occurrence_log.create');
+                Route::patch('{id}', [DigitalOccurrenceLogController::class, 'update'])->name('admin.occurrence_log.update');
+                Route::delete('{id}', [DigitalOccurrenceLogController::class, 'destroy'])->name('admin.occurrence_log.delete');
+            });
+
+            Route::prefix('shifts/notes')->group(function () {
+                Route::get('', [ShiftNoteController::class, 'all'])->name('admin.shift_notes.list');
+                Route::post('', [ShiftNoteController::class, 'store'])->name('admin.shift_notes.create');
+                Route::patch('{id}', [ShiftNoteController::class, 'update'])->name('admin.shift_notes.update');
+                Route::delete('{id}', [ShiftNoteController::class, 'destroy'])->name('admin.shift_notes.delete');
+            });
         });
+
+        Route::get('organization/company-settings', [OrganizationController::class, 'getSettings'])->name('organization.get_settings');
+        Route::put('organization/company-settings', [OrganizationController::class, 'settings'])->name('organization.update_settings');
     //});
 
     Route::prefix('shifts')->group(function () {
@@ -128,6 +160,13 @@ Route::get('timezones', [TimezoneController::class, 'index']);
             Route::patch('{id}', [CustomerInvoiceProfileController::class, 'update'])->name('customer.update');
             Route::delete('{id}', [CustomerInvoiceProfileController::class, 'destroy'])->name('customer.delete');
         });
+
+        Route::prefix('{customerId}/invoices')->group(function () {
+            Route::get('', [CustomerInvoiceController::class, 'index'])->name('customer.invoices.list');
+            Route::post('', [CustomerInvoiceController::class, 'store'])->name('customer.invoices.create');
+            Route::patch('{id}', [CustomerInvoiceController::class, 'update'])->name('customer.invoices.update');
+            Route::delete('{id}', [CustomerInvoiceController::class, 'destroy'])->name('customer.invoices.delete');
+        });
     });
     
     Route::prefix('customer-invoice-profiles')->group(function () {
@@ -138,6 +177,7 @@ Route::get('timezones', [TimezoneController::class, 'index']);
         Route::get('', [SiteController::class, 'index'])->name('static_site.list');
         Route::get('paginated/{page}/{filter?}', [SiteController::class, 'paginatedList'])->name('static_site.list');
         Route::post('', [SiteController::class, 'store'])->name('static_site.create');
+        Route::get('{id}', [SiteController::class, 'show'])->name('static_site.show');
         Route::patch('{id}', [SiteController::class, 'update'])->name('static_site.update');
         Route::delete('{id}', [SiteController::class, 'destroy'])->name('static_site.delete');
 
@@ -276,15 +316,67 @@ Route::get('timezones', [TimezoneController::class, 'index']);
 //});
 
 Route::middleware(['auth:sanctum'])->prefix('worker')->group(function () {
+    // Geofence endpoints
     Route::get('/current-shift', [WorkerGeofenceController::class, 'getCurrentShift']);
     Route::post('/location', [WorkerGeofenceController::class, 'updateLocation']);
     Route::post('/checkin', [WorkerGeofenceController::class, 'submitCheckin']);
     Route::get('/checkin-history', [WorkerGeofenceController::class, 'getCheckinHistory']);
     Route::get('/duty-history', [WorkerGeofenceController::class, 'getDutyHistory']);
+    Route::get('/shift-history', [WorkerGeofenceController::class, 'getDutyHistory']); // alias: Flutter calls shift-history
     Route::get('/shift-details/{shiftId}', [WorkerGeofenceController::class, 'getShiftDetails']);
-    
+    Route::get('/shifts/{shiftId}', [WorkerGeofenceController::class, 'getShiftDetails']); // alias: Flutter calls shifts/{id}
+
     // Checkin CRUD endpoints
     Route::get('/checkins/{id}', [WorkerGeofenceController::class, 'getCheckin']);
     Route::put('/checkins/{id}', [WorkerGeofenceController::class, 'updateCheckin']);
     Route::delete('/checkins/{id}', [WorkerGeofenceController::class, 'deleteCheckin']);
+
+    // Worker endpoints
+    Route::get('sites', [WorkerController::class, 'sites']);
+    Route::get('offered-shifts', [WorkerController::class, 'offeredShifts']);
+    Route::post('shifts/{id}/accept', [WorkerController::class, 'acceptShift']);
+    Route::post('shifts/{id}/decline', [WorkerController::class, 'declineShift']);
+    Route::get('check-calls', [WorkerController::class, 'checkCalls']);
+    Route::post('check-calls/{id}/respond', [WorkerController::class, 'respondToCheckCall']);
+    Route::get('alarms', [WorkerController::class, 'alarmHistory']);
+    Route::post('alarms', [WorkerController::class, 'raiseAlarm']);
+    Route::post('clock-in', [WorkerController::class, 'clockIn']);
+    Route::post('clock-out', [WorkerController::class, 'clockOut']);
+    Route::post('shift/start', [WorkerController::class, 'startShift']);
+    Route::post('shift/{id}/end', [WorkerController::class, 'endShift']);
+    Route::get('recent-checkins', [WorkerController::class, 'recentCheckins']);
+    Route::get('tasks', [WorkerController::class, 'tasks']);
+    Route::post('tasks/{id}/status', [WorkerController::class, 'updateTaskStatus']);
+    Route::get('attendance', [WorkerController::class, 'attendance']);
+    Route::get('activities', [WorkerController::class, 'activities']);
+    Route::get('reports', [WorkerController::class, 'reports']);
+    Route::post('reports', [WorkerController::class, 'submitReport']);
+    Route::get('notifications', [WorkerController::class, 'notifications']);
+    Route::post('notifications/read-all', [WorkerController::class, 'markAllNotificationsRead']);
+    Route::post('notifications/{id}/read', [WorkerController::class, 'markNotificationRead']);
+    Route::delete('notifications/{id}', [WorkerController::class, 'deleteNotification']);
+});
+
+Route::middleware(['auth:sanctum'])->prefix('supervisor')->group(function () {
+    Route::get('dashboard', [SupervisorController::class, 'dashboard']);
+    Route::get('active-site-visit', [SupervisorController::class, 'activeSiteVisit']);
+    Route::get('assigned-sites', [SupervisorController::class, 'assignedSites']);
+    Route::get('workers', [SupervisorController::class, 'workers']);
+    Route::get('statistics', [SupervisorController::class, 'statistics']);
+    Route::get('all-officers', [SupervisorController::class, 'allOfficers']);
+    Route::get('recent-reports', [SupervisorController::class, 'recentReports']);
+    Route::get('reports/{id}', [SupervisorController::class, 'getReport']);
+    Route::post('reports', [SupervisorController::class, 'submitReport']);
+    Route::post('reports/{id}/review', [SupervisorController::class, 'reviewReport']);
+    Route::post('site-visits/start', [SupervisorController::class, 'startSiteVisit']);
+    Route::post('site-visits/end', [SupervisorController::class, 'endSiteVisit']);
+    Route::get('notifications', [SupervisorController::class, 'notifications']);
+    Route::post('notifications/read-all', [SupervisorController::class, 'markAllNotificationsRead']);
+    Route::post('notifications/{id}/read', [SupervisorController::class, 'markNotificationRead']);
+    Route::delete('notifications/{id}', [SupervisorController::class, 'deleteNotification']);
+    Route::post('workers/{id}/tasks/assign', [SupervisorController::class, 'assignTask']);
+    Route::post('checkins', [SupervisorController::class, 'submitCheckin']);
+    Route::post('qr-scans', [SupervisorController::class, 'saveQrScan']);
+    Route::get('alarms', [SupervisorController::class, 'alarmHistory']);
+    Route::post('alarms', [SupervisorController::class, 'raiseAlarm']);
 });

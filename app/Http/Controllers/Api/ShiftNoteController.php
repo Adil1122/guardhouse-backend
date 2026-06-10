@@ -17,4 +17,12 @@ class ShiftNoteController extends BaseController
         parent::__construct(new ShiftNote());
         $this->service = $service;
     }
+
+    public function all(Request $request)
+    {
+        $notes = ShiftNote::with('shift')
+            ->orderBy('created_at', 'desc')
+            ->get();
+        return response()->json($this->resource::collection($notes), 200);
+    }
 }

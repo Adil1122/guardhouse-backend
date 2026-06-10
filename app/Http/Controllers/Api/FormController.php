@@ -111,6 +111,15 @@ class FormController extends BaseController
         ], 200);
     }
 
+    public function clockInQuestionnaires(Request $request)
+    {
+        $forms = Form::where('type', 'clock_in')
+            ->orWhere('type', 'questionnaire')
+            ->with('elements')
+            ->get();
+        return response()->json($this->resource::collection($forms), 200);
+    }
+
     public function updateElementOrder(\Illuminate\Http\Request $request, $id)
     {
         $request->validate([

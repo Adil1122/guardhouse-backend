@@ -13,6 +13,12 @@ class OrganizationController extends BaseController
         parent::__construct(new OrganizationSetting());
     }
 
+    public function getSettings(Request $request)
+    {
+        $record = OrganizationSetting::firstOrCreate(['id' => 1]);
+        return response()->json(new $this->resource($record), 200);
+    }
+
     public function settings(Request $request)
     {
         $validatedData = $request->validate($this->model->getValidationRules('update'));

@@ -2,15 +2,68 @@
 
 namespace App\Services;
 
-use App\Models\Form;
-use App\Models\FormElement;
-use Illuminate\Support\Facades\DB;
-use Auth;
+use App\Models\Shift;
+use App\Models\Checkin;
+use App\Models\ShiftAlert;
+use Illuminate\Support\Facades\Auth;
 
 class LiveOperationService
 {
     public function list()
     {
-        $user = Auth::user();
+        $activeShifts = Shift::whereIn('status', ['clocked-in', 'scheduled'])
+            ->with(['site', 'assignedUser'])
+            ->orderBy('start_date', 'asc')
+            ->get();
+
+        $recentAlerts = ShiftAlert::whereNull('response_status')
+            ->with(['user', 'shift.site'])
+            ->orderBy('created_at', 'desc')
+            ->limit(20)
+            ->get();
+
+        $recentCheckins = Checkin::with(['user', 'shift.site'])
+            ->orderBy('checked_in_at', 'desc')
+            ->limit(20)
+            ->get();
+
+        return [
+            'active_shifts' => $activeShifts->map(function ($shift) {
+                return [
+                    'id' => $shift->id,
+                    'site_name' => $shift->site?->name ?? '',
+                    'worker_name' => $shift->assignedUser?->name
+                        ?? (($shift->assignedUser?->first_name ?? '') . ' ' . ($shift->assignedUser?->last_name ?? '')),
+                    'status' => $shift->status,
+                    'start_time' => $shift->start_time,
+                    'end_time' => $shift->end_time,
+                    'date' => $shift->start_date,
+                ];
+            }),
+            'recent_alerts' => $recentAlerts->map(function ($alert) {
+                return [
+                    'id' => $alert->id,
+                    'type' => $alert->type,
+                    'worker_name' => $alert->user?->name ?? '',
+                    'site_name' => $alert->shift?->site?->name ?? '',
+                    'timestamp' => $alert->created_at,
+                ];
+            }),
+            'recent_checkins' => $recentCheckins->map(function ($checkin) {
+                return [
+                    'id' => $checkin->id,
+                    'worker_name' => $checkin->user?->name ?? '',
+                    'site_name' => $checkin->shift?->site?->name ?? '',
+                    'location' => $checkin->location_description,
+                    'timestamp' => $checkin->checked_in_at,
+                    'inside_geofence' => $checkin->inside_geofence,
+                ];
+            }),
+            'summary' => [
+                'active_shifts_count' => $activeShifts->count(),
+                'unresponded_alerts' => $recentAlerts->count(),
+                'checkins_today' => Checkin::whereDate('checked_in_at', today())->count(),
+            ],
+        ];
     }
 }

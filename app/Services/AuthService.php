@@ -137,7 +137,7 @@ class AuthService
 
             $user = User::find($data['user_id']);
 
-            if (!Hash::check($data['current_password'], $advertiser->password)) {
+            if (!Hash::check($data['current_password'], $user->password)) {
                 return ['error' => 'Current password is incorrect'];
             }
 
