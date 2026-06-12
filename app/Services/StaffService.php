@@ -71,7 +71,9 @@ class StaffService
                 // handle image upload if it's a file
                 $imagePath = $data['image'] ?? null;
                 if (isset($data['image']) && $data['image'] instanceof \Illuminate\Http\UploadedFile) {
-                    $imagePath = $data['image']->store('profile-images', 'public');
+                    $filename = time() . '_' . $data['image']->getClientOriginalName();
+                    $data['image']->move(public_path('storage/profile-images'), $filename);
+                    $imagePath = 'profile-images/' . $filename;
                 }
 
                 // update user columns only if data key exists
@@ -151,7 +153,7 @@ class StaffService
         if ($files) {
             foreach ($files as $file) {
                 $filename = time() . '_' . $file->getClientOriginalName();
-                $file->storeAs('compliance-documents', $filename, 'public');
+                $file->move(public_path('storage/compliance-documents'), $filename);
                 $filenames[] = $filename;
             }
         }
@@ -205,7 +207,10 @@ class StaffService
 
         if ($compliance->files && is_array($compliance->files)) {
             foreach ($compliance->files as $file) {
-                Storage::delete('public/compliance-documents/' . $file);
+                $filePath = public_path('storage/compliance-documents/' . $file);
+                if (file_exists($filePath)) {
+                    unlink($filePath);
+                }
             }
         }
 

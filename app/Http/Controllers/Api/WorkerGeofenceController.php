@@ -160,9 +160,29 @@ class WorkerGeofenceController extends Controller
                 ->first();
 
             if (!$currentShift) {
-                return response()->json([
-                    'message' => 'No active shift found. Please start your shift first.',
-                ], 400);
+                $upcomingShift = Shift::where('assigned_to', $user->id)
+                    ->whereIn('status', ['scheduled', 'offered', 'created', 'confirmed'])
+                    ->orderBy('start_date', 'asc')
+                    ->with('site')
+                    ->first();
+                    
+                if ($upcomingShift) {
+                    $upcomingShift->status = 'clocked-in';
+                    $upcomingShift->save();
+                    
+                    \App\Models\ShiftTimeclockLog::create([
+                        'shift_id' => $upcomingShift->id,
+                        'user_id' => $user->id,
+                        'type' => 'clock_in',
+                        'clocked_in' => now(),
+                    ]);
+                    
+                    $currentShift = $upcomingShift;
+                } else {
+                    return response()->json([
+                        'message' => 'No active or upcoming shift found.',
+                    ], 400);
+                }
             }
             
             \Log::info('Current shift found: ' . $currentShift->id);
@@ -206,7 +226,9 @@ class WorkerGeofenceController extends Controller
             // Handle photo upload
             if ($request->hasFile('photo')) {
                 $photo = $request->file('photo');
-                $photoPath = $photo->store('checkin_photos', 'public');
+                $filename = time() . '_' . $photo->getClientOriginalName();
+                $photo->move(public_path('storage/checkin_photos'), $filename);
+                $photoPath = 'checkin_photos/' . $filename;
                 
                 // Extract GPS data from photo if available
                 // For now, we'll use the provided coordinates
@@ -266,7 +288,10 @@ class WorkerGeofenceController extends Controller
                 
                 // Delete uploaded photo if transaction failed
                 if ($photoPath) {
-                    Storage::disk('public')->delete($photoPath);
+                    $filePath = public_path('storage/' . $photoPath);
+                    if (file_exists($filePath)) {
+                        unlink($filePath);
+                    }
                 }
                 
                 return response()->json([
@@ -528,7 +553,10 @@ class WorkerGeofenceController extends Controller
 
             // Delete photo if exists
             if ($checkin->photo_path) {
-                Storage::disk('public')->delete($checkin->photo_path);
+                $filePath = public_path('storage/' . $checkin->photo_path);
+                if (file_exists($filePath)) {
+                    unlink($filePath);
+                }
             }
 
             $checkin->delete();

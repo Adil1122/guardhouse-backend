@@ -202,7 +202,19 @@ class WorkerController extends Controller
         if (!$shift) {
             return response()->json(['message' => 'Shift not found'], 404);
         }
-        $shift->update(['status' => 'clocked-out']);
+        $shift->update(['status' => 'ended']);
+        
+        $latestCheckin = \App\Models\Checkin::where('shift_id', $id)
+            ->where('user_id', auth()->id())
+            ->latest('checked_in_at')
+            ->first();
+            
+        if ($latestCheckin) {
+            $latestCheckin->update([
+                'checked_out_at' => now(),
+            ]);
+        }
+        
         return response()->json(['message' => 'Shift ended'], 200);
     }
 
@@ -222,15 +234,56 @@ class WorkerController extends Controller
     public function tasks(Request $request)
     {
         $shifts = Shift::where('assigned_to', auth()->id())
-            ->whereIn('status', ['scheduled', 'offered'])
+            ->whereIn('status', ['created', 'awaiting', 'missed-clock-in', 'missed-alert'])
             ->with('site')
-            ->orderBy('start_date', 'asc')
             ->get();
 
-        return response()->json($shifts->map(function ($shift) {
+        $validShifts = $shifts->filter(function ($shift) {
+            $tz = $shift->timezone ?: 'UTC';
+            try {
+                $now = now()->setTimezone($tz);
+            } catch (\Exception $e) {
+                $now = now();
+            }
+            
+            $currentDate = $now->format('Y-m-d');
+            $currentTime = $now->format('H:i:s');
+            
+            // Extract just the YYYY-MM-DD part safely
+            $startDate = substr((string)$shift->start_date, 0, 10);
+            $endDate = $shift->end_date ? substr((string)$shift->end_date, 0, 10) : $startDate;
+            
+            if ($currentDate < $startDate || $currentDate > $endDate) {
+                return false;
+            }
+            
+            // Extract HH:MM:SS safely
+            $startTime = substr((string)$shift->start_time, 0, 8);
+            if (strlen($startTime) == 5) $startTime .= ':00';
+            
+            $endTime = $shift->end_time ? substr((string)$shift->end_time, 0, 8) : $startTime;
+            if (strlen($endTime) == 5) $endTime .= ':00';
+            
+            if ($startTime <= $endTime) {
+                return $currentTime >= $startTime && $currentTime <= $endTime;
+            } else {
+                return $currentTime >= $startTime || $currentTime <= $endTime;
+            }
+        });
+
+        $validShifts = $validShifts->sortBy(function ($shift) {
+            return $shift->start_date . ' ' . $shift->start_time;
+        })->values();
+
+        return response()->json($validShifts->map(function ($shift) {
             return [
                 'id' => $shift->id,
+                'site_id' => $shift->site_id,
                 'site_name' => $shift->site->name ?? '',
+                'site_address' => is_string($shift->site->address) 
+                    ? $shift->site->address 
+                    : ($shift->site->address['formatted_address'] ?? 'Address not available'),
+                'geofence' => $shift->site->geofence,
                 'date' => $shift->start_date,
                 'start_time' => $shift->start_time,
                 'end_time' => $shift->end_time,

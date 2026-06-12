@@ -19,7 +19,9 @@ class RegisterService
             $user = DB::transaction(function () use ($data) {
                 $imagePath = $data['image'] ?? null;
                 if (isset($data['image']) && $data['image'] instanceof \Illuminate\Http\UploadedFile) {
-                    $imagePath = $data['image']->store('profile-images', 'public');
+                    $filename = time() . '_' . $data['image']->getClientOriginalName();
+                    $data['image']->move(public_path('storage/profile-images'), $filename);
+                    $imagePath = 'profile-images/' . $filename;
                 } elseif (is_string($imagePath) && str_starts_with($imagePath, 'http')) {
                     $imagePath = null;
                 }

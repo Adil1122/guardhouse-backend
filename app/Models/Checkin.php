@@ -20,12 +20,15 @@ class Checkin extends Model
         'photo_lat',
         'photo_lng',
         'checked_in_at',
+        'checked_out_at',
+        'status',
         'inside_geofence',
         'distance_from_site',
     ];
 
     protected $casts = [
         'checked_in_at' => 'datetime',
+        'checked_out_at' => 'datetime',
         'latitude' => 'decimal:8',
         'longitude' => 'decimal:8',
         'photo_lat' => 'decimal:8',
