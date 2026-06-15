@@ -11,7 +11,10 @@ class LiveOperationService
 {
     public function list()
     {
-        $activeShifts = Shift::whereIn('status', ['clocked-in', 'scheduled'])
+        $activeShifts = Shift::whereIn('status', [
+                'clocked-in', 'checking-welfare', 'scheduled', 'confirmed',
+                'missed-alert', 'missed-clock-in', 'clocked-out-offsite',
+            ])
             ->with(['site', 'assignedUser'])
             ->orderBy('start_date', 'asc')
             ->get();
@@ -31,9 +34,8 @@ class LiveOperationService
             'active_shifts' => $activeShifts->map(function ($shift) {
                 return [
                     'id' => $shift->id,
-                    'site_name' => $shift->site?->name ?? '',
-                    'worker_name' => $shift->assignedUser?->name
-                        ?? (($shift->assignedUser?->first_name ?? '') . ' ' . ($shift->assignedUser?->last_name ?? '')),
+                    'site_name' => $shift->site?->name ?? 'Unknown Site',
+                    'worker_name' => trim(($shift->assignedUser?->first_name ?? '') . ' ' . ($shift->assignedUser?->last_name ?? '')) ?: ($shift->assignedUser?->email ?? 'Unassigned'),
                     'status' => $shift->status,
                     'start_time' => $shift->start_time,
                     'end_time' => $shift->end_time,
@@ -44,18 +46,18 @@ class LiveOperationService
                 return [
                     'id' => $alert->id,
                     'type' => $alert->type,
-                    'worker_name' => $alert->user?->name ?? '',
-                    'site_name' => $alert->shift?->site?->name ?? '',
-                    'timestamp' => $alert->created_at,
+                    'worker_name' => trim(($alert->user?->first_name ?? '') . ' ' . ($alert->user?->last_name ?? '')) ?: ($alert->user?->email ?? 'Unknown'),
+                    'site_name' => $alert->shift?->site?->name ?? 'Unknown Site',
+                    'timestamp' => $alert->created_at?->toISOString(),
                 ];
             }),
             'recent_checkins' => $recentCheckins->map(function ($checkin) {
                 return [
                     'id' => $checkin->id,
-                    'worker_name' => $checkin->user?->name ?? '',
-                    'site_name' => $checkin->shift?->site?->name ?? '',
+                    'worker_name' => trim(($checkin->user?->first_name ?? '') . ' ' . ($checkin->user?->last_name ?? '')) ?: ($checkin->user?->email ?? 'Unknown'),
+                    'site_name' => $checkin->shift?->site?->name ?? 'Unknown Site',
                     'location' => $checkin->location_description,
-                    'timestamp' => $checkin->checked_in_at,
+                    'timestamp' => $checkin->checked_in_at?->toISOString(),
                     'inside_geofence' => $checkin->inside_geofence,
                 ];
             }),

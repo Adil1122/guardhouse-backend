@@ -12,6 +12,7 @@ use App\Models\ShiftAlert;
 use App\Models\ShiftCheckpointScan;
 use App\Models\SiteVisit;
 use App\Models\SupervisorReport;
+use App\Models\CheckCall;
 
 class SupervisorController extends Controller
 {
@@ -399,6 +400,32 @@ class SupervisorController extends Controller
                 ->count(),
             'active_shifts' => Shift::whereIn('site_id', $siteIds)->where('status', 'clocked-in')->count(),
         ];
+    }
+
+    // POST supervisor/workers/{id}/check-calls
+    public function sendCheckCall(Request $request, $id)
+    {
+        $worker = User::find($id);
+        if (!$worker) {
+            return response()->json(['message' => 'Worker not found'], 404);
+        }
+
+        $call = CheckCall::create([
+            'worker_id' => $id,
+            'status' => 'pending',
+            'scheduled_at' => now(),
+        ]);
+
+        return response()->json([
+            'message' => 'Check call sent',
+            'check_call' => [
+                'id' => $call->id,
+                'worker_id' => $call->worker_id,
+                'status' => $call->status,
+                'timestamp' => $call->scheduled_at->format('M j, Y H:i'),
+                'scheduled_at' => $call->scheduled_at,
+            ],
+        ], 201);
     }
 
     private function formatSiteVisit($visit): array

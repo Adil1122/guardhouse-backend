@@ -320,6 +320,7 @@ Route::middleware(['auth:sanctum'])->prefix('worker')->group(function () {
     Route::get('/current-shift', [WorkerGeofenceController::class, 'getCurrentShift']);
     Route::post('/location', [WorkerGeofenceController::class, 'updateLocation']);
     Route::post('/checkin', [WorkerGeofenceController::class, 'submitCheckin']);
+    Route::post('/qr-scan', [WorkerGeofenceController::class, 'scanQrCheckpoint']);
     Route::get('/checkin-history', [WorkerGeofenceController::class, 'getCheckinHistory']);
     Route::get('/duty-history', [WorkerGeofenceController::class, 'getDutyHistory']);
     Route::get('/shift-history', [WorkerGeofenceController::class, 'getDutyHistory']); // alias: Flutter calls shift-history
@@ -333,6 +334,8 @@ Route::middleware(['auth:sanctum'])->prefix('worker')->group(function () {
 
     // Worker endpoints
     Route::get('sites', [WorkerController::class, 'sites']);
+    Route::get('assigned-site', [WorkerController::class, 'assignedSite']);
+    Route::get('my-shifts', [WorkerController::class, 'myShifts']);
     Route::get('offered-shifts', [WorkerController::class, 'offeredShifts']);
     Route::post('shifts/{id}/accept', [WorkerController::class, 'acceptShift']);
     Route::post('shifts/{id}/decline', [WorkerController::class, 'declineShift']);
@@ -375,6 +378,7 @@ Route::middleware(['auth:sanctum'])->prefix('supervisor')->group(function () {
     Route::post('notifications/{id}/read', [SupervisorController::class, 'markNotificationRead']);
     Route::delete('notifications/{id}', [SupervisorController::class, 'deleteNotification']);
     Route::post('workers/{id}/tasks/assign', [SupervisorController::class, 'assignTask']);
+    Route::post('workers/{id}/check-calls', [SupervisorController::class, 'sendCheckCall']);
     Route::post('checkins', [SupervisorController::class, 'submitCheckin']);
     Route::post('qr-scans', [SupervisorController::class, 'saveQrScan']);
     Route::get('alarms', [SupervisorController::class, 'alarmHistory']);

@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use App\Models\Shift;
 use App\Models\Checkin;
 use App\Models\Site;
+use App\Models\SiteCheckpoint;
 use App\Services\GeofenceService;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
@@ -28,7 +29,7 @@ class WorkerGeofenceController extends Controller
         $user = $request->user();
         
         $currentShift = Shift::where('assigned_to', $user->id)
-            ->where('status', 'clocked-in')
+            ->whereIn('status', ['clocked-in', 'checking-welfare'])
             ->with(['site', 'site.checkpoints'])
             ->first();
 
@@ -54,15 +55,22 @@ class WorkerGeofenceController extends Controller
             }
         }
 
+        // Get actual clock-in time from timeclock log
+        $clockLog = \App\Models\ShiftTimeclockLog::where('shift_id', $currentShift->id)
+            ->whereNotNull('clocked_in')
+            ->latest('clocked_in')
+            ->first();
+
         return response()->json([
             'data' => [
                 'id' => $currentShift->id,
                 'site_id' => $currentShift->site_id,
                 'site_name' => $currentShift->site->name,
-                'site_address' => is_string($currentShift->site->address) 
-                    ? $currentShift->site->address 
+                'site_address' => is_string($currentShift->site->address)
+                    ? $currentShift->site->address
                     : ($currentShift->site->address['formatted_address'] ?? 'Address not available'),
                 'geofence' => $currentShift->site->geofence,
+                'started_at' => $clockLog ? \Carbon\Carbon::parse($clockLog->clocked_in)->toISOString() : null,
                 'start_time' => $currentShift->start_time,
                 'inside_geofence' => $insideGeofence,
                 'inside_geofence_since' => $insideGeofenceSince,
@@ -155,17 +163,17 @@ class WorkerGeofenceController extends Controller
             \Log::info('User found: ' . $user->id);
             
             $currentShift = Shift::where('assigned_to', $user->id)
-                ->where('status', 'clocked-in')
+                ->whereIn('status', ['clocked-in', 'checking-welfare'])
                 ->with('site')
                 ->first();
 
             if (!$currentShift) {
                 $upcomingShift = Shift::where('assigned_to', $user->id)
-                    ->whereIn('status', ['scheduled', 'offered', 'created', 'confirmed'])
+                    ->whereIn('status', ['scheduled', 'confirmed', 'created', 'offered'])
                     ->orderBy('start_date', 'asc')
                     ->with('site')
                     ->first();
-                    
+
                 if ($upcomingShift) {
                     $upcomingShift->status = 'clocked-in';
                     $upcomingShift->save();
@@ -316,7 +324,7 @@ class WorkerGeofenceController extends Controller
         $user = $request->user();
         
         $currentShift = Shift::where('assigned_to', $user->id)
-            ->where('status', 'clocked-in')
+            ->whereIn('status', ['clocked-in', 'checking-welfare'])
             ->first();
 
         if (!$currentShift) {
@@ -447,6 +455,86 @@ class WorkerGeofenceController extends Controller
                 'checkins' => $checkins,
             ]
         ]);
+    }
+
+    /**
+     * Scan a QR checkpoint token and record the check-in
+     */
+    public function scanQrCheckpoint(Request $request)
+    {
+        $request->validate([
+            'qr_token'  => 'required|string',
+            'latitude'  => 'nullable|string',
+            'longitude' => 'nullable|string',
+        ]);
+
+        $user = $request->user();
+
+        $currentShift = Shift::where('assigned_to', $user->id)
+            ->whereIn('status', ['clocked-in', 'checking-welfare'])
+            ->with('site')
+            ->first();
+
+        if (!$currentShift) {
+            return response()->json([
+                'message' => 'No active shift found. Please clock in before scanning a checkpoint.',
+            ], 400);
+        }
+
+        $checkpoint = SiteCheckpoint::where('qr_code_token', $request->qr_token)->first();
+
+        if (!$checkpoint) {
+            return response()->json([
+                'message' => 'Invalid QR code. No matching checkpoint found.',
+            ], 404);
+        }
+
+        if ($checkpoint->site_id !== $currentShift->site_id) {
+            return response()->json([
+                'message' => 'This checkpoint does not belong to your current site (' . $currentShift->site->name . ').',
+            ], 403);
+        }
+
+        $latitude  = $request->latitude  ? (float) $request->latitude  : 0.0;
+        $longitude = $request->longitude ? (float) $request->longitude : 0.0;
+
+        DB::beginTransaction();
+        try {
+            $checkin = Checkin::create([
+                'shift_id'            => $currentShift->id,
+                'site_checkpoint_id'  => $checkpoint->id,
+                'user_id'             => $user->id,
+                'latitude'            => $latitude,
+                'longitude'           => $longitude,
+                'location_description'=> $checkpoint->name,
+                'notes'               => 'QR checkpoint scan',
+                'type'                => 'checkpoint',
+                'checked_in_at'       => now(),
+                'inside_geofence'     => true,
+                'distance_from_site'  => 0,
+            ]);
+
+            $currentShift->checkpointScans()->create([
+                'site_checkpoint_id' => $checkpoint->id,
+            ]);
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Checkpoint scanned successfully',
+                'data'    => [
+                    'checkpoint_name' => $checkpoint->name,
+                    'checkin_id'      => $checkin->id,
+                    'scanned_at'      => $checkin->checked_in_at,
+                ],
+            ], 201);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Log::error('QR scan error: ' . $e->getMessage());
+            return response()->json([
+                'message' => 'Failed to record checkpoint scan.',
+            ], 500);
+        }
     }
 
     private function calculateDurationHours($shift)

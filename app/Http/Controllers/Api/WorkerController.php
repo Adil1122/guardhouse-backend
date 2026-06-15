@@ -32,28 +32,153 @@ class WorkerController extends Controller
         }), 200);
     }
 
+    // GET worker/assigned-site
+    public function assignedSite(Request $request)
+    {
+        $userId = auth()->id();
+
+        // Priority 1: active (clocked-in) shift
+        $shift = Shift::where('assigned_to', $userId)
+            ->whereIn('status', ['clocked-in', 'checking-welfare'])
+            ->with('site')
+            ->first();
+        $shiftStatus = 'active';
+
+        // Priority 2: next upcoming scheduled shift today or future
+        if (!$shift) {
+            $shift = Shift::where('assigned_to', $userId)
+                ->whereIn('status', ['scheduled', 'confirmed', 'created', 'offered'])
+                ->where('start_date', '>=', now()->toDateString())
+                ->orderBy('start_date')
+                ->orderBy('start_time')
+                ->with('site')
+                ->first();
+            $shiftStatus = 'upcoming';
+        }
+
+        if (!$shift || !$shift->site) {
+            return response()->json(['site' => null], 200);
+        }
+
+        $site    = $shift->site;
+        $rawAddr = $site->address;
+        $address = is_array($rawAddr)
+            ? ($rawAddr['formatted_address'] ?? $rawAddr['street'] ?? 'Address not available')
+            : (is_string($rawAddr) && !empty($rawAddr) ? $rawAddr : 'Address not available');
+
+        $startStr = $shift->start_time ? substr($shift->start_time, 0, 5) : '';
+        $endStr   = $shift->end_time   ? substr($shift->end_time, 0, 5)   : '';
+        $dateStr  = $shift->start_date
+            ? \Carbon\Carbon::parse($shift->start_date)->format('M j, D')
+            : '';
+
+        return response()->json([
+            'site' => [
+                'id'         => $site->id,
+                'name'       => $site->name ?? 'Unknown Site',
+                'address'    => $address,
+                'shift_id'   => $shift->id,
+                'shift_date' => $dateStr,
+                'shift_time' => $startStr && $endStr ? "$startStr – $endStr" : '',
+                'status'     => $shiftStatus,
+            ],
+        ], 200);
+    }
+
+    // GET worker/my-shifts
+    public function myShifts(Request $request)
+    {
+        $shifts = Shift::where('assigned_to', auth()->id())
+            ->whereNotIn('status', ['rejected'])
+            ->with(['site', 'payGroup'])
+            ->orderBy('start_date', 'desc')
+            ->orderBy('start_time', 'desc')
+            ->get();
+
+        return response()->json([
+            'shifts' => $shifts->map(function ($shift) {
+                $startStr = $shift->start_time ? substr($shift->start_time, 0, 5) : '';
+                $endStr   = $shift->end_time   ? substr($shift->end_time, 0, 5)   : '';
+
+                $hoursStr = '';
+                if ($shift->start_time && $shift->end_time) {
+                    $s = \Carbon\Carbon::createFromFormat('H:i:s', $shift->start_time);
+                    $e = \Carbon\Carbon::createFromFormat('H:i:s', $shift->end_time);
+                    if ($e->lte($s)) $e->addDay();
+                    $mins = $s->diffInMinutes($e);
+                    $hoursStr = $mins % 60 === 0
+                        ? ($mins / 60) . ' hrs'
+                        : round($mins / 60, 1) . ' hrs';
+                }
+
+                $dateStr = $shift->start_date
+                    ? \Carbon\Carbon::parse($shift->start_date)->format('M j, D')
+                    : '';
+
+                $normalizedStatus = match ($shift->status) {
+                    'clocked-in', 'checking-welfare'            => 'active',
+                    'clocked-out', 'clocked-out-offsite'        => 'completed',
+                    'missed-alert', 'missed-clock-in'           => 'missed',
+                    'offered'                                   => 'offered',
+                    default                                     => 'upcoming',
+                };
+
+                return [
+                    'id'         => $shift->id,
+                    'site_name'  => $shift->site?->name ?? 'Unknown Site',
+                    'date'       => $dateStr,
+                    'start_time' => $startStr,
+                    'end_time'   => $endStr,
+                    'time'       => $startStr && $endStr ? "$startStr – $endStr" : '',
+                    'hours'      => $hoursStr,
+                    'pay_note'   => $shift->payGroup?->name ?? 'Standard rate',
+                    'status'     => $normalizedStatus,
+                ];
+            }),
+        ], 200);
+    }
+
     // GET worker/offered-shifts
     public function offeredShifts(Request $request)
     {
+        // Include 'created' (admin-assigned but not yet responded to) and 'offered' statuses
         $shifts = Shift::where('assigned_to', auth()->id())
-            ->where('status', 'offered')
-            ->with(['site', 'site.customer.user'])
+            ->whereIn('status', ['offered', 'created'])
+            ->with(['site', 'payGroup'])
             ->orderBy('start_date', 'asc')
             ->get();
 
-        return response()->json($shifts->map(function ($shift) {
-            return [
-                'id' => $shift->id,
-                'site_name' => $shift->site->name ?? '',
-                'date' => $shift->start_date,
-                'time' => ($shift->start_time ?? '') . ' – ' . ($shift->end_time ?? ''),
-                'hours' => $shift->start_time && $shift->end_time
-                    ? $shift->start_time . '–' . $shift->end_time
-                    : '',
-                'pay_note' => $shift->payGroup->name ?? '',
-                'status' => $shift->status,
-            ];
-        }), 200);
+        return response()->json([
+            'shifts' => $shifts->map(function ($shift) {
+                $startStr = $shift->start_time ? substr($shift->start_time, 0, 5) : '';
+                $endStr   = $shift->end_time   ? substr($shift->end_time, 0, 5)   : '';
+
+                $hoursStr = '';
+                if ($shift->start_time && $shift->end_time) {
+                    $s = \Carbon\Carbon::createFromFormat('H:i:s', $shift->start_time);
+                    $e = \Carbon\Carbon::createFromFormat('H:i:s', $shift->end_time);
+                    if ($e->lte($s)) $e->addDay();
+                    $mins = $s->diffInMinutes($e);
+                    $hoursStr = $mins % 60 === 0
+                        ? ($mins / 60) . ' hrs'
+                        : round($mins / 60, 1) . ' hrs';
+                }
+
+                $dateStr = $shift->start_date
+                    ? \Carbon\Carbon::parse($shift->start_date)->format('M j, D')
+                    : '';
+
+                return [
+                    'id'        => $shift->id,
+                    'site_name' => $shift->site?->name ?? '',
+                    'date'      => $dateStr,
+                    'time'      => $startStr && $endStr ? "$startStr – $endStr" : '',
+                    'hours'     => $hoursStr,
+                    'pay_note'  => $shift->payGroup?->name ?? 'Standard rate',
+                    'status'    => $shift->status,
+                ];
+            }),
+        ], 200);
     }
 
     // POST worker/shifts/{id}/accept
@@ -63,7 +188,7 @@ class WorkerController extends Controller
         if (!$shift) {
             return response()->json(['message' => 'Shift not found'], 404);
         }
-        $shift->update(['status' => 'scheduled']);
+        $shift->update(['status' => 'confirmed']);
         return response()->json(['message' => 'Shift accepted'], 200);
     }
 
@@ -74,7 +199,7 @@ class WorkerController extends Controller
         if (!$shift) {
             return response()->json(['message' => 'Shift not found'], 404);
         }
-        $shift->update(['status' => 'declined']);
+        $shift->update(['status' => 'rejected']);
         return response()->json(['message' => 'Shift declined'], 200);
     }
 
@@ -85,14 +210,18 @@ class WorkerController extends Controller
             ->orderBy('created_at', 'desc')
             ->get();
 
-        return response()->json($calls->map(function ($call) {
-            return [
-                'id' => $call->id,
-                'status' => $call->status,
-                'scheduled_at' => $call->scheduled_at,
-                'responded_at' => $call->responded_at,
-            ];
-        }), 200);
+        return response()->json([
+            'check_calls' => $calls->map(function ($call) {
+                $displayTime = $call->scheduled_at ?? $call->created_at;
+                return [
+                    'id' => $call->id,
+                    'status' => $call->status,
+                    'timestamp' => $displayTime ? $displayTime->format('M j, Y H:i') : '',
+                    'scheduled_at' => $call->scheduled_at,
+                    'responded_at' => $call->responded_at,
+                ];
+            }),
+        ], 200);
     }
 
     // POST worker/check-calls/{id}/respond
@@ -114,22 +243,22 @@ class WorkerController extends Controller
             ->orderBy('created_at', 'desc')
             ->get();
 
-        return response()->json($alerts->map(function ($alert) {
+        return response()->json(['alarms' => $alerts->map(function ($alert) {
             return [
                 'id' => $alert->id,
-                'type' => $alert->type,
+                'type' => $alert->type ?? 'Emergency Alarm',
                 'status' => $alert->response_status ?? 'raised',
-                'timestamp' => $alert->created_at,
+                'timestamp' => $alert->created_at?->toISOString(),
                 'shift_id' => $alert->shift_id,
             ];
-        }), 200);
+        })], 200);
     }
 
     // POST worker/alarms
     public function raiseAlarm(Request $request)
     {
         $userId = auth()->id();
-        $shift = Shift::where('assigned_to', $userId)->where('status', 'clocked-in')->first();
+        $shift = Shift::where('assigned_to', $userId)->whereIn('status', ['clocked-in', 'checking-welfare'])->first();
         $shiftId = $shift?->id ?? $request->input('shift_id');
 
         if (!$shiftId) {
@@ -152,6 +281,20 @@ class WorkerController extends Controller
         $request->validate([
             'shift_id' => 'required|exists:shifts,id',
         ]);
+
+        $active = Shift::where('assigned_to', auth()->id())
+            ->whereIn('status', ['clocked-in', 'checking-welfare'])
+            ->where('id', '!=', $request->shift_id)
+            ->with('site')
+            ->first();
+
+        if ($active) {
+            return response()->json([
+                'message' => 'You are already on duty at ' . ($active->site?->name ?? 'another site') . '. Please complete that shift before starting a new one.',
+                'active_shift_id' => $active->id,
+                'active_site' => $active->site?->name,
+            ], 409);
+        }
 
         $log = ShiftTimeclockLog::create([
             'shift_id' => $request->shift_id,
@@ -187,11 +330,33 @@ class WorkerController extends Controller
     public function startShift(Request $request)
     {
         $request->validate(['shift_id' => 'required|exists:shifts,id']);
+
         $shift = Shift::where('id', $request->shift_id)->where('assigned_to', auth()->id())->first();
         if (!$shift) {
             return response()->json(['message' => 'Shift not found'], 404);
         }
+
+        $active = Shift::where('assigned_to', auth()->id())
+            ->whereIn('status', ['clocked-in', 'checking-welfare'])
+            ->where('id', '!=', $shift->id)
+            ->with('site')
+            ->first();
+
+        if ($active) {
+            return response()->json([
+                'message' => 'You are already on duty at ' . ($active->site?->name ?? 'another site') . '. Please complete that shift before starting a new one.',
+                'active_shift_id' => $active->id,
+                'active_site' => $active->site?->name,
+            ], 409);
+        }
+
         $shift->update(['status' => 'clocked-in']);
+
+        ShiftTimeclockLog::create([
+            'shift_id' => $shift->id,
+            'clocked_in' => now(),
+        ]);
+
         return response()->json(['message' => 'Shift started'], 200);
     }
 
@@ -202,7 +367,7 @@ class WorkerController extends Controller
         if (!$shift) {
             return response()->json(['message' => 'Shift not found'], 404);
         }
-        $shift->update(['status' => 'ended']);
+        $shift->update(['status' => 'clocked-out']);
         
         $latestCheckin = \App\Models\Checkin::where('shift_id', $id)
             ->where('user_id', auth()->id())
@@ -234,7 +399,7 @@ class WorkerController extends Controller
     public function tasks(Request $request)
     {
         $shifts = Shift::where('assigned_to', auth()->id())
-            ->whereIn('status', ['created', 'awaiting', 'missed-clock-in', 'missed-alert'])
+            ->whereIn('status', ['created', 'offered', 'scheduled', 'confirmed', 'awaiting', 'missed-clock-in', 'missed-alert'])
             ->with('site')
             ->get();
 
@@ -339,15 +504,21 @@ class WorkerController extends Controller
     public function notifications(Request $request)
     {
         $notifications = auth()->user()->notifications()->orderBy('created_at', 'desc')->get();
-        return response()->json($notifications->map(function ($n) {
+        return response()->json(['notifications' => $notifications->map(function ($n) {
+            $data = is_array($n->data) ? $n->data : [];
+            // Derive a short type slug from the PHP class name for the frontend icon
+            $typeParts = explode('\\', $n->type ?? '');
+            $shortType = strtolower(end($typeParts));
+            $isAlert = str_contains($shortType, 'alert') || str_contains($shortType, 'alarm') || str_contains($shortType, 'welfare');
             return [
-                'id' => $n->id,
-                'type' => $n->type,
-                'data' => $n->data,
-                'read' => !is_null($n->read_at),
-                'created_at' => $n->created_at,
+                'id'         => $n->id,
+                'type'       => $isAlert ? 'alert' : 'info',
+                'title'      => $data['title'] ?? ($isAlert ? 'Alert' : 'Notification'),
+                'message'    => $data['message'] ?? $data['body'] ?? $data['content'] ?? 'You have a new notification',
+                'read'       => !is_null($n->read_at),
+                'created_at' => $n->created_at?->toISOString(),
             ];
-        }), 200);
+        })], 200);
     }
 
     // POST worker/notifications/{id}/read
