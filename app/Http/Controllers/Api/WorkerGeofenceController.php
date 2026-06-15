@@ -71,7 +71,9 @@ class WorkerGeofenceController extends Controller
                     : ($currentShift->site->address['formatted_address'] ?? 'Address not available'),
                 'geofence' => $currentShift->site->geofence,
                 'started_at' => $clockLog ? \Carbon\Carbon::parse($clockLog->clocked_in)->toISOString() : null,
+                'start_date' => $currentShift->start_date,
                 'start_time' => $currentShift->start_time,
+                'end_time' => $currentShift->end_time,
                 'inside_geofence' => $insideGeofence,
                 'inside_geofence_since' => $insideGeofenceSince,
                 'last_checkin' => $latestCheckin ? $latestCheckin->checked_in_at : null,
@@ -286,6 +288,7 @@ class WorkerGeofenceController extends Controller
                         'inside_geofence' => $insideGeofence,
                         'distance_from_site' => $distance,
                         'photo_path' => $photoPath,
+                        'photo_url'  => $this->photoUrl($photoPath),
                         'checked_in_at' => $checkin->checked_in_at,
                     ]
                 ]);
@@ -317,35 +320,31 @@ class WorkerGeofenceController extends Controller
     }
 
     /**
-     * Get checkin history for current shift
+     * Get all checkin history for the worker across all shifts
      */
     public function getCheckinHistory(Request $request)
     {
         $user = $request->user();
-        
-        $currentShift = Shift::where('assigned_to', $user->id)
-            ->whereIn('status', ['clocked-in', 'checking-welfare'])
-            ->first();
 
-        if (!$currentShift) {
-            return response()->json([
-                'message' => 'No active shift found',
-                'data' => []
-            ]);
-        }
+        $shiftIds = Shift::where('assigned_to', $user->id)->pluck('id');
 
-        $checkins = Checkin::where('shift_id', $currentShift->id)
-            ->with(['checkpoint'])
+        $checkins = Checkin::whereIn('shift_id', $shiftIds)
+            ->with(['checkpoint', 'shift.site'])
             ->orderBy('checked_in_at', 'desc')
             ->get()
             ->map(function ($checkin) {
                 return [
                     'id' => $checkin->id,
+                    'shift_id' => $checkin->shift_id,
+                    'site_name' => $checkin->shift?->site?->name ?? 'Unknown Site',
                     'location_description' => $checkin->location_description,
                     'notes' => $checkin->notes,
                     'type' => $checkin->type,
                     'photo_path' => $checkin->photo_path,
+                    'photo_url'  => $this->photoUrl($checkin->photo_path),
                     'checked_in_at' => $checkin->checked_in_at,
+                    'latitude' => $checkin->latitude,
+                    'longitude' => $checkin->longitude,
                     'inside_geofence' => $checkin->inside_geofence,
                     'distance_from_site' => $checkin->distance_from_site,
                     'checkpoint' => $checkin->checkpoint ? [
@@ -539,14 +538,45 @@ class WorkerGeofenceController extends Controller
 
     private function calculateDurationHours($shift)
     {
+        // Prefer actual times from the timeclock log
+        $log = \App\Models\ShiftTimeclockLog::where('shift_id', $shift->id)
+            ->whereNotNull('clocked_in')
+            ->whereNotNull('clocked_out')
+            ->latest('clocked_in')
+            ->first();
+
+        if ($log) {
+            $mins = $log->work_duration
+                ?? (int) \Carbon\Carbon::parse($log->clocked_in)->diffInMinutes(\Carbon\Carbon::parse($log->clocked_out));
+            return round($mins / 60, 1);
+        }
+
+        // Fall back to scheduled start/end times
         if (!$shift->start_time || !$shift->end_time) {
             return 0;
         }
 
         $start = \Carbon\Carbon::parse($shift->start_date . ' ' . $shift->start_time);
-        $end = \Carbon\Carbon::parse($shift->start_date . ' ' . $shift->end_time);
-        
-        return $end->diffInHours($start);
+        $end   = \Carbon\Carbon::parse($shift->start_date . ' ' . $shift->end_time);
+        if ($end->lte($start)) $end->addDay();
+
+        return round($start->diffInMinutes($end) / 60, 1);
+    }
+
+    /**
+     * Build a public URL for a stored photo path.
+     * Derives the app base from the current request so it works
+     * regardless of APP_URL in .env.
+     */
+    private function photoUrl(?string $path): ?string
+    {
+        if (!$path) return null;
+        $requestUrl = request()->url();
+        $apiPos = strpos($requestUrl, '/api/');
+        $appBase = $apiPos !== false
+            ? substr($requestUrl, 0, $apiPos)
+            : rtrim(url('/'), '/');
+        return $appBase . '/public/storage/' . $path;
     }
 
     /**

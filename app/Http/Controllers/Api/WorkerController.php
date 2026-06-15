@@ -116,11 +116,30 @@ class WorkerController extends Controller
                     : '';
 
                 $normalizedStatus = match ($shift->status) {
-                    'clocked-in', 'checking-welfare'            => 'active',
-                    'clocked-out', 'clocked-out-offsite'        => 'completed',
-                    'missed-alert', 'missed-clock-in'           => 'missed',
-                    'offered'                                   => 'offered',
-                    default                                     => 'upcoming',
+                    'clocked-in', 'checking-welfare'  => 'active',
+                    'clocked-out', 'clocked-out-offsite' => (function () use ($shift) {
+                        $log = \App\Models\ShiftTimeclockLog::where('shift_id', $shift->id)
+                            ->whereNotNull('clocked_out')
+                            ->latest('clocked_out')
+                            ->first();
+                        if ($log && $shift->end_time) {
+                            $scheduledEnd = \Carbon\Carbon::parse($shift->start_date . ' ' . $shift->end_time);
+                            $scheduledStart = $shift->start_time
+                                ? \Carbon\Carbon::parse($shift->start_date . ' ' . $shift->start_time)
+                                : null;
+                            if ($scheduledStart && !$scheduledEnd->isAfter($scheduledStart)) {
+                                $scheduledEnd->addDay();
+                            }
+                            $clockedOut = \Carbon\Carbon::parse($log->clocked_out);
+                            if ($clockedOut->lt($scheduledEnd)) {
+                                return 'ended_early';
+                            }
+                        }
+                        return 'completed';
+                    })(),
+                    'missed-alert', 'missed-clock-in' => 'missed',
+                    'offered'                         => 'offered',
+                    default                           => 'upcoming',
                 };
 
                 return [
@@ -367,20 +386,31 @@ class WorkerController extends Controller
         if (!$shift) {
             return response()->json(['message' => 'Shift not found'], 404);
         }
+
+        $now = now();
         $shift->update(['status' => 'clocked-out']);
-        
-        $latestCheckin = \App\Models\Checkin::where('shift_id', $id)
-            ->where('user_id', auth()->id())
-            ->latest('checked_in_at')
+
+        // Record actual clock-out and work_duration in the timeclock log
+        $log = ShiftTimeclockLog::where('shift_id', $id)
+            ->whereNotNull('clocked_in')
+            ->whereNull('clocked_out')
+            ->latest('clocked_in')
             ->first();
-            
-        if ($latestCheckin) {
-            $latestCheckin->update([
-                'checked_out_at' => now(),
+
+        if ($log) {
+            $clockedIn = \Carbon\Carbon::parse($log->clocked_in);
+            $duration = (int) $clockedIn->diffInMinutes($now);
+            $log->update([
+                'clocked_out'   => $now,
+                'work_duration' => $duration,
             ]);
         }
-        
-        return response()->json(['message' => 'Shift ended'], 200);
+
+        return response()->json([
+            'message'       => 'Shift ended',
+            'clocked_out'   => $now->toISOString(),
+            'work_duration' => $log ? $log->work_duration : 0,
+        ], 200);
     }
 
     // GET worker/recent-checkins
