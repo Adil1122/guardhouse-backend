@@ -44,6 +44,7 @@ class StaffProfileResource extends JsonResource
 
         return [
             'profile_id' => $this->id,
+            'unique_id' => $this->unique_id,
             'user_id' => $user?->id,
             'role' => $user?->role,
             'first_name' => $user?->first_name,

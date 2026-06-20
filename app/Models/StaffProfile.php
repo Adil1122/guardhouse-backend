@@ -12,6 +12,7 @@ class StaffProfile extends Model
 
     protected $fillable = [
         'user_id',
+        'unique_id',
         'preferred_first_name',
         'preferred_last_name',
         'sia_badge_number',
@@ -23,6 +24,21 @@ class StaffProfile extends Model
         'tax_number',
         'default_pay_group_id',
     ];
+
+    protected static function boot(): void
+    {
+        parent::boot();
+
+        static::creating(function (self $profile) {
+            if (empty($profile->unique_id)) {
+                do {
+                    $id = str_pad((string) random_int(0, 9999999999999999), 16, '0', STR_PAD_LEFT);
+                } while (self::where('unique_id', $id)->exists());
+
+                $profile->unique_id = $id;
+            }
+        });
+    }
 
     protected $casts = ['emergency_contact' => 'array', 'bank_details' => 'array'];
 

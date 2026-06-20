@@ -376,6 +376,49 @@ class SupervisorController extends Controller
         return response()->json(['message' => 'Alarm raised', 'id' => $alert->id], 201);
     }
 
+    // GET admin/alarms
+    public function adminAlarmHistory(Request $request)
+    {
+        $alerts = ShiftAlert::with(['user', 'shift'])
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        return response()->json($alerts->map(function ($alert) {
+            return [
+                'id'        => $alert->id,
+                'type'      => $alert->type,
+                'status'    => $alert->response_status ?? 'raised',
+                'timestamp' => $alert->created_at,
+                'user_name' => $alert->user?->name ?? '',
+            ];
+        }), 200);
+    }
+
+    // POST admin/alarms
+    public function adminRaiseAlarm(Request $request)
+    {
+        $shiftId = $request->input('shift_id');
+
+        if (!$shiftId) {
+            // Find any currently active shift
+            $shift = Shift::whereIn('status', ['clocked-in', 'checking-welfare'])->first();
+            $shiftId = $shift?->id;
+        }
+
+        if (!$shiftId) {
+            return response()->json(['message' => 'No active shift found. Please provide shift_id.'], 422);
+        }
+
+        $alert = ShiftAlert::create([
+            'shift_id'        => $shiftId,
+            'user_id'         => auth()->id(),
+            'type'            => $request->input('type', 'in-app-notification'),
+            'response_status' => null,
+        ]);
+
+        return response()->json(['message' => 'Alarm raised', 'id' => $alert->id], 201);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private function getSupervisorSiteIds($supervisorId): array

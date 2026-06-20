@@ -36,6 +36,7 @@ use App\Http\Controllers\Api\SupervisorController;
 use App\Http\Controllers\Api\AlertController;
 use App\Http\Controllers\Api\CustomerInvoiceController;
 use App\Http\Controllers\Api\StatisticsController;
+use App\Http\Controllers\Api\TeamMessageController;
 
 Route::prefix('auth')->group(function () {
     Route::middleware(['throttle:login', 'check.honeypot'])->post('login', [AuthController::class, 'login']);
@@ -70,7 +71,7 @@ Route::get('timezones', [TimezoneController::class, 'index']);
             Route::patch('settings', [OrganizationController::class, 'settings'])->name('organization.settings');
         });
 
-        Route::prefix('admin')->group(function () {
+        Route::middleware(['auth:sanctum'])->prefix('admin')->group(function () {
             Route::get('system-statistics', [StatisticsController::class, 'index'])->name('admin.statistics');
             Route::get('activities', [StatisticsController::class, 'activities'])->name('admin.activities');
             Route::get('system-logs', [StatisticsController::class, 'systemLogs'])->name('admin.system_logs');
@@ -96,6 +97,13 @@ Route::get('timezones', [TimezoneController::class, 'index']);
                 Route::patch('{id}', [ShiftNoteController::class, 'update'])->name('admin.shift_notes.update');
                 Route::delete('{id}', [ShiftNoteController::class, 'destroy'])->name('admin.shift_notes.delete');
             });
+
+            Route::get('alarms', [SupervisorController::class, 'adminAlarmHistory'])->name('admin.alarms.list');
+            Route::post('alarms', [SupervisorController::class, 'adminRaiseAlarm'])->name('admin.alarms.raise');
+
+            Route::get('team-messages', [TeamMessageController::class, 'adminIndex'])->name('admin.team_messages.list');
+            Route::post('team-messages', [TeamMessageController::class, 'store'])->name('admin.team_messages.create');
+            Route::delete('team-messages/{id}', [TeamMessageController::class, 'destroy'])->name('admin.team_messages.delete');
         });
 
         Route::get('organization/company-settings', [OrganizationController::class, 'getSettings'])->name('organization.get_settings');
@@ -358,7 +366,9 @@ Route::middleware(['auth:sanctum'])->prefix('worker')->group(function () {
     Route::post('notifications/read-all', [WorkerController::class, 'markAllNotificationsRead']);
     Route::post('notifications/{id}/read', [WorkerController::class, 'markNotificationRead']);
     Route::delete('notifications/{id}', [WorkerController::class, 'deleteNotification']);
+    Route::get('team-messages', [TeamMessageController::class, 'index']);
 });
+
 
 Route::middleware(['auth:sanctum'])->prefix('supervisor')->group(function () {
     Route::get('dashboard', [SupervisorController::class, 'dashboard']);
@@ -383,4 +393,5 @@ Route::middleware(['auth:sanctum'])->prefix('supervisor')->group(function () {
     Route::post('qr-scans', [SupervisorController::class, 'saveQrScan']);
     Route::get('alarms', [SupervisorController::class, 'alarmHistory']);
     Route::post('alarms', [SupervisorController::class, 'raiseAlarm']);
+    Route::get('team-messages', [TeamMessageController::class, 'index']);
 });
