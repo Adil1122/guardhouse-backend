@@ -12,4 +12,9 @@ class TeamMessage extends Model
     {
         return $this->belongsTo(User::class, 'created_by');
     }
+
+    public function replies()
+    {
+        return $this->hasMany(TeamMessageReply::class, 'team_message_id');
+    }
 }

@@ -104,6 +104,8 @@ Route::get('timezones', [TimezoneController::class, 'index']);
             Route::get('team-messages', [TeamMessageController::class, 'adminIndex'])->name('admin.team_messages.list');
             Route::post('team-messages', [TeamMessageController::class, 'store'])->name('admin.team_messages.create');
             Route::delete('team-messages/{id}', [TeamMessageController::class, 'destroy'])->name('admin.team_messages.delete');
+            Route::get('team-messages/{id}/replies', [TeamMessageController::class, 'adminReplies'])->name('admin.team_messages.replies.list');
+            Route::post('team-messages/{id}/replies', [TeamMessageController::class, 'adminStoreReply'])->name('admin.team_messages.replies.create');
         });
 
         Route::get('organization/company-settings', [OrganizationController::class, 'getSettings'])->name('organization.get_settings');
@@ -367,6 +369,8 @@ Route::middleware(['auth:sanctum'])->prefix('worker')->group(function () {
     Route::post('notifications/{id}/read', [WorkerController::class, 'markNotificationRead']);
     Route::delete('notifications/{id}', [WorkerController::class, 'deleteNotification']);
     Route::get('team-messages', [TeamMessageController::class, 'index']);
+    Route::get('team-messages/{id}/replies', [TeamMessageController::class, 'myReplies']);
+    Route::post('team-messages/{id}/replies', [TeamMessageController::class, 'storeReply']);
 });
 
 
@@ -394,4 +398,6 @@ Route::middleware(['auth:sanctum'])->prefix('supervisor')->group(function () {
     Route::get('alarms', [SupervisorController::class, 'alarmHistory']);
     Route::post('alarms', [SupervisorController::class, 'raiseAlarm']);
     Route::get('team-messages', [TeamMessageController::class, 'index']);
+    Route::get('team-messages/{id}/replies', [TeamMessageController::class, 'myReplies']);
+    Route::post('team-messages/{id}/replies', [TeamMessageController::class, 'storeReply']);
 });
