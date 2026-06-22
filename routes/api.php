@@ -369,6 +369,7 @@ Route::middleware(['auth:sanctum'])->prefix('worker')->group(function () {
     Route::post('notifications/{id}/read', [WorkerController::class, 'markNotificationRead']);
     Route::delete('notifications/{id}', [WorkerController::class, 'deleteNotification']);
     Route::get('team-messages', [TeamMessageController::class, 'index']);
+    Route::post('team-messages/{id}/mark-read', [TeamMessageController::class, 'markRead']);
     Route::get('team-messages/{id}/replies', [TeamMessageController::class, 'myReplies']);
     Route::post('team-messages/{id}/replies', [TeamMessageController::class, 'storeReply']);
 });
@@ -398,6 +399,7 @@ Route::middleware(['auth:sanctum'])->prefix('supervisor')->group(function () {
     Route::get('alarms', [SupervisorController::class, 'alarmHistory']);
     Route::post('alarms', [SupervisorController::class, 'raiseAlarm']);
     Route::get('team-messages', [TeamMessageController::class, 'index']);
+    Route::post('team-messages/{id}/mark-read', [TeamMessageController::class, 'markRead']);
     Route::get('team-messages/{id}/replies', [TeamMessageController::class, 'myReplies']);
     Route::post('team-messages/{id}/replies', [TeamMessageController::class, 'storeReply']);
 });

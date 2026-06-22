@@ -5,7 +5,11 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\TeamMessage;
 use App\Models\TeamMessageReply;
+use App\Models\User;
+use App\Notifications\TeamMessageNotification;
+use App\Notifications\TeamMessageReplyNotification;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Notification;
 
 class TeamMessageController extends Controller
 {
@@ -38,6 +42,33 @@ class TeamMessageController extends Controller
         ];
     }
 
+    private function unreadMessageIds($user): array
+    {
+        return $user->unreadNotifications()
+            ->where('type', TeamMessageNotification::class)
+            ->get()
+            ->map(fn($n) => (string) ($n->data['team_message_id'] ?? ''))
+            ->filter()
+            ->values()
+            ->all();
+    }
+
+    // POST worker/team-messages/{id}/mark-read, POST supervisor/team-messages/{id}/mark-read
+    public function markRead($messageId)
+    {
+        $user = auth()->user();
+        $notifications = $user->unreadNotifications()
+            ->where('type', TeamMessageNotification::class)
+            ->get()
+            ->filter(fn($n) => (string) ($n->data['team_message_id'] ?? '') === (string) $messageId);
+
+        foreach ($notifications as $notification) {
+            $notification->markAsRead();
+        }
+
+        return response()->json(['message' => 'Marked as read']);
+    }
+
     // GET worker/team-messages/{id}/replies, GET supervisor/team-messages/{id}/replies
     public function myReplies($messageId)
     {
@@ -61,8 +92,12 @@ class TeamMessageController extends Controller
             'sender_id'       => auth()->id(),
             'body'            => $request->body,
         ]);
+        $reply->load('sender');
 
-        return response()->json(['message' => 'Reply sent', 'data' => $this->formatReply($reply->load('sender'))], 201);
+        $admins = User::whereIn('role', ['admin', 'master-admin'])->get();
+        Notification::send($admins, new TeamMessageReplyNotification($reply));
+
+        return response()->json(['message' => 'Reply sent', 'data' => $this->formatReply($reply)], 201);
     }
 
     // GET admin/team-messages/{id}/replies
@@ -104,8 +139,14 @@ class TeamMessageController extends Controller
             'sender_id'       => auth()->id(),
             'body'            => $request->body,
         ]);
+        $reply->load('sender');
 
-        return response()->json(['message' => 'Reply sent', 'data' => $this->formatReply($reply->load('sender'))], 201);
+        $threadUser = User::find($request->thread_user_id);
+        if ($threadUser) {
+            $threadUser->notify(new TeamMessageReplyNotification($reply));
+        }
+
+        return response()->json(['message' => 'Reply sent', 'data' => $this->formatReply($reply)], 201);
     }
 
     // GET admin/team-messages
@@ -131,8 +172,12 @@ class TeamMessageController extends Controller
             'title'      => $request->title,
             'body'       => $request->body,
         ]);
+        $msg->load('creator');
 
-        return response()->json(['message' => 'Message sent', 'data' => $this->format($msg->load('creator'))], 201);
+        $recipients = User::whereIn('role', ['security-officer', 'supervisor'])->get();
+        Notification::send($recipients, new TeamMessageNotification($msg));
+
+        return response()->json(['message' => 'Message sent', 'data' => $this->format($msg)], 201);
     }
 
     // DELETE admin/team-messages/{id}
@@ -150,6 +195,12 @@ class TeamMessageController extends Controller
             ->orderBy('created_at', 'desc')
             ->get();
 
-        return response()->json(['messages' => $messages->map(fn($m) => $this->format($m))]);
+        $unreadIds = $this->unreadMessageIds(auth()->user());
+
+        return response()->json(['messages' => $messages->map(function ($m) use ($unreadIds) {
+            $formatted = $this->format($m);
+            $formatted['is_unread'] = in_array((string) $m->id, $unreadIds, true);
+            return $formatted;
+        })]);
     }
 }
