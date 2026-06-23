@@ -355,6 +355,23 @@ class WorkerController extends Controller
             return response()->json(['message' => 'Shift not found'], 404);
         }
 
+        if ($shift->start_date && $shift->start_time) {
+            $tz = $shift->timezone ?: 'Europe/London';
+            try {
+                $scheduledStart = \Carbon\Carbon::parse($shift->start_date . ' ' . $shift->start_time, $tz);
+                $earliestStart = $scheduledStart->copy()->subMinutes(15);
+                $nowInTz = now()->setTimezone($tz);
+
+                if ($nowInTz->lt($earliestStart)) {
+                    return response()->json([
+                        'message' => 'You can start this shift no earlier than 15 minutes before its scheduled start time (' . $scheduledStart->format('M d, Y h:i A') . ').',
+                    ], 422);
+                }
+            } catch (\Exception $e) {
+                // If the shift's date/time can't be parsed, don't block the start.
+            }
+        }
+
         $active = Shift::where('assigned_to', auth()->id())
             ->whereIn('status', ['clocked-in', 'checking-welfare'])
             ->where('id', '!=', $shift->id)
@@ -385,6 +402,28 @@ class WorkerController extends Controller
         $shift = Shift::where('id', $id)->where('assigned_to', auth()->id())->first();
         if (!$shift) {
             return response()->json(['message' => 'Shift not found'], 404);
+        }
+
+        if ($shift->start_date && $shift->end_time) {
+            $tz = $shift->timezone ?: 'Europe/London';
+            try {
+                $scheduledEnd = \Carbon\Carbon::parse($shift->start_date . ' ' . $shift->end_time, $tz);
+                $scheduledStart = $shift->start_time
+                    ? \Carbon\Carbon::parse($shift->start_date . ' ' . $shift->start_time, $tz)
+                    : null;
+                if ($scheduledStart && !$scheduledEnd->isAfter($scheduledStart)) {
+                    $scheduledEnd->addDay();
+                }
+                $nowInTz = now()->setTimezone($tz);
+
+                if ($nowInTz->lt($scheduledEnd)) {
+                    return response()->json([
+                        'message' => 'You cannot end this shift before its scheduled end time (' . $scheduledEnd->format('M d, Y h:i A') . ').',
+                    ], 422);
+                }
+            } catch (\Exception $e) {
+                // If the shift's date/time can't be parsed, don't block ending.
+            }
         }
 
         $now = now();

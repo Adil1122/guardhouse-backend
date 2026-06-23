@@ -177,16 +177,33 @@ class WorkerGeofenceController extends Controller
                     ->first();
 
                 if ($upcomingShift) {
+                    if ($upcomingShift->start_date && $upcomingShift->start_time) {
+                        $tz = $upcomingShift->timezone ?: 'Europe/London';
+                        try {
+                            $scheduledStart = \Carbon\Carbon::parse($upcomingShift->start_date . ' ' . $upcomingShift->start_time, $tz);
+                            $earliestStart = $scheduledStart->copy()->subMinutes(15);
+                            $nowInTz = now()->setTimezone($tz);
+
+                            if ($nowInTz->lt($earliestStart)) {
+                                return response()->json([
+                                    'message' => 'You can start this shift no earlier than 15 minutes before its scheduled start time (' . $scheduledStart->format('M d, Y h:i A') . ').',
+                                ], 422);
+                            }
+                        } catch (\Exception $e) {
+                            // If the shift's date/time can't be parsed, don't block the start.
+                        }
+                    }
+
                     $upcomingShift->status = 'clocked-in';
                     $upcomingShift->save();
-                    
+
                     \App\Models\ShiftTimeclockLog::create([
                         'shift_id' => $upcomingShift->id,
                         'user_id' => $user->id,
                         'type' => 'clock_in',
                         'clocked_in' => now(),
                     ]);
-                    
+
                     $currentShift = $upcomingShift;
                 } else {
                     return response()->json([
