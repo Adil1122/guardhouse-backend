@@ -61,6 +61,17 @@ class WorkerGeofenceController extends Controller
             ->latest('clocked_in')
             ->first();
 
+        // For multi-day shifts (start_date..end_date), the client uses this
+        // date paired with start_time/end_time to compute the shift's
+        // scheduled end for the auto-end timer. It must be the day the
+        // worker actually clocked in, not the shift's original start_date —
+        // otherwise a worker joining partway through the date range would
+        // have the auto-end fire instantly against an already-past day.
+        $tz = $currentShift->timezone ?: 'Europe/London';
+        $occurrenceDate = $clockLog
+            ? \Carbon\Carbon::parse($clockLog->clocked_in)->setTimezone($tz)->format('Y-m-d')
+            : $currentShift->start_date;
+
         return response()->json([
             'data' => [
                 'id' => $currentShift->id,
@@ -71,7 +82,7 @@ class WorkerGeofenceController extends Controller
                     : ($currentShift->site->address['formatted_address'] ?? 'Address not available'),
                 'geofence' => $currentShift->site->geofence,
                 'started_at' => $clockLog ? \Carbon\Carbon::parse($clockLog->clocked_in)->toISOString() : null,
-                'start_date' => $currentShift->start_date,
+                'start_date' => $occurrenceDate,
                 'start_time' => $currentShift->start_time,
                 'end_time' => $currentShift->end_time,
                 'inside_geofence' => $insideGeofence,
@@ -170,30 +181,59 @@ class WorkerGeofenceController extends Controller
                 ->first();
 
             if (!$currentShift) {
-                $upcomingShift = Shift::where('assigned_to', $user->id)
+                $candidateShifts = Shift::where('assigned_to', $user->id)
                     ->whereIn('status', ['scheduled', 'confirmed', 'created', 'offered'])
                     ->orderBy('start_date', 'asc')
+                    ->orderBy('start_time', 'asc')
                     ->with('site')
-                    ->first();
+                    ->get();
+
+                // Pick the first shift whose scheduled window (15-min-early grace
+                // through its scheduled end) actually contains "now" — don't blindly
+                // grab the chronologically earliest one, since a stale/missed shift
+                // sitting in one of these statuses would otherwise get auto-started
+                // and then instantly auto-ended by the client once its end time
+                // (already in the past) is detected.
+                $upcomingShift = null;
+                foreach ($candidateShifts as $candidate) {
+                    if (!$candidate->start_date || !$candidate->start_time) {
+                        continue;
+                    }
+                    $tz = $candidate->timezone ?: 'Europe/London';
+                    try {
+                        // For multi-day shifts (start_date..end_date), anchor to
+                        // today if we're within the shift's date range, otherwise
+                        // to its first scheduled day — never anchor to a date
+                        // that's already behind us once we're inside the range.
+                        $startDateStr = substr((string) $candidate->start_date, 0, 10);
+                        $endDateStr = $candidate->end_date ? substr((string) $candidate->end_date, 0, 10) : $startDateStr;
+                        $todayStr = now()->setTimezone($tz)->format('Y-m-d');
+                        if ($todayStr > $endDateStr) {
+                            continue;
+                        }
+                        $anchorDate = $todayStr >= $startDateStr ? $todayStr : $startDateStr;
+
+                        $scheduledStart = \Carbon\Carbon::parse($anchorDate . ' ' . $candidate->start_time, $tz);
+                        $earliestStart = $scheduledStart->copy()->subMinutes(15);
+                        $nowInTz = now()->setTimezone($tz);
+
+                        $scheduledEnd = $candidate->end_time
+                            ? \Carbon\Carbon::parse($anchorDate . ' ' . $candidate->end_time, $tz)
+                            : $scheduledStart->copy()->addHours(12);
+                        if (!$scheduledEnd->isAfter($scheduledStart)) {
+                            $scheduledEnd->addDay();
+                        }
+
+                        if ($nowInTz->gte($earliestStart) && $nowInTz->lte($scheduledEnd)) {
+                            $upcomingShift = $candidate;
+                            break;
+                        }
+                    } catch (\Exception $e) {
+                        continue;
+                    }
+                }
 
                 if ($upcomingShift) {
-                    if ($upcomingShift->start_date && $upcomingShift->start_time) {
-                        $tz = $upcomingShift->timezone ?: 'Europe/London';
-                        try {
-                            $scheduledStart = \Carbon\Carbon::parse($upcomingShift->start_date . ' ' . $upcomingShift->start_time, $tz);
-                            $earliestStart = $scheduledStart->copy()->subMinutes(15);
-                            $nowInTz = now()->setTimezone($tz);
-
-                            if ($nowInTz->lt($earliestStart)) {
-                                return response()->json([
-                                    'message' => 'You can start this shift no earlier than 15 minutes before its scheduled start time (' . $scheduledStart->format('M d, Y h:i A') . ').',
-                                ], 422);
-                            }
-                        } catch (\Exception $e) {
-                            // If the shift's date/time can't be parsed, don't block the start.
-                        }
-                    }
-
                     $upcomingShift->status = 'clocked-in';
                     $upcomingShift->save();
 

@@ -95,6 +95,14 @@ class WorkerController extends Controller
             ->orderBy('start_time', 'desc')
             ->get();
 
+        // Pin the currently active (clocked-in / checking-welfare) shift to the
+        // top regardless of its date, then keep the latest-first ordering for
+        // everything else.
+        $shifts = $shifts->sortByDesc(function ($shift) {
+            $isActive = in_array($shift->status, ['clocked-in', 'checking-welfare']) ? '1' : '0';
+            return $isActive . '_' . $shift->start_date . ' ' . $shift->start_time;
+        })->values();
+
         return response()->json([
             'shifts' => $shifts->map(function ($shift) {
                 $startStr = $shift->start_time ? substr($shift->start_time, 0, 5) : '';
@@ -358,7 +366,23 @@ class WorkerController extends Controller
         if ($shift->start_date && $shift->start_time) {
             $tz = $shift->timezone ?: 'Europe/London';
             try {
-                $scheduledStart = \Carbon\Carbon::parse($shift->start_date . ' ' . $shift->start_time, $tz);
+                // For multi-day shifts (start_date..end_date), anchor the
+                // time-of-day check to today if we're within the shift's date
+                // range, otherwise to its first scheduled day — never anchor
+                // to a date that's already behind us once we're inside the range.
+                $startDateStr = substr((string) $shift->start_date, 0, 10);
+                $endDateStr = $shift->end_date ? substr((string) $shift->end_date, 0, 10) : $startDateStr;
+                $todayStr = now()->setTimezone($tz)->format('Y-m-d');
+
+                if ($todayStr > $endDateStr) {
+                    return response()->json([
+                        'message' => "This shift's scheduled window has already ended. Please contact your supervisor.",
+                    ], 422);
+                }
+
+                $anchorDate = $todayStr >= $startDateStr ? $todayStr : $startDateStr;
+
+                $scheduledStart = \Carbon\Carbon::parse($anchorDate . ' ' . $shift->start_time, $tz);
                 $earliestStart = $scheduledStart->copy()->subMinutes(15);
                 $nowInTz = now()->setTimezone($tz);
 
@@ -404,12 +428,27 @@ class WorkerController extends Controller
             return response()->json(['message' => 'Shift not found'], 404);
         }
 
-        if ($shift->start_date && $shift->end_time) {
+        // Record actual clock-out and work_duration in the timeclock log
+        $log = ShiftTimeclockLog::where('shift_id', $id)
+            ->whereNotNull('clocked_in')
+            ->whereNull('clocked_out')
+            ->latest('clocked_in')
+            ->first();
+
+        if ($shift->end_time) {
             $tz = $shift->timezone ?: 'Europe/London';
             try {
-                $scheduledEnd = \Carbon\Carbon::parse($shift->start_date . ' ' . $shift->end_time, $tz);
+                // Anchor to the day the worker actually clocked in, not the
+                // shift's (possibly multi-day-range) start_date — otherwise a
+                // worker who joins partway through a date range would have
+                // the end-time check computed against an already-past day.
+                $anchorDate = $log
+                    ? \Carbon\Carbon::parse($log->clocked_in)->setTimezone($tz)->format('Y-m-d')
+                    : substr((string) $shift->start_date, 0, 10);
+
+                $scheduledEnd = \Carbon\Carbon::parse($anchorDate . ' ' . $shift->end_time, $tz);
                 $scheduledStart = $shift->start_time
-                    ? \Carbon\Carbon::parse($shift->start_date . ' ' . $shift->start_time, $tz)
+                    ? \Carbon\Carbon::parse($anchorDate . ' ' . $shift->start_time, $tz)
                     : null;
                 if ($scheduledStart && !$scheduledEnd->isAfter($scheduledStart)) {
                     $scheduledEnd->addDay();
@@ -428,13 +467,6 @@ class WorkerController extends Controller
 
         $now = now();
         $shift->update(['status' => 'clocked-out']);
-
-        // Record actual clock-out and work_duration in the timeclock log
-        $log = ShiftTimeclockLog::where('shift_id', $id)
-            ->whereNotNull('clocked_in')
-            ->whereNull('clocked_out')
-            ->latest('clocked_in')
-            ->first();
 
         if ($log) {
             $clockedIn = \Carbon\Carbon::parse($log->clocked_in);
@@ -510,15 +542,27 @@ class WorkerController extends Controller
         })->values();
 
         return response()->json($validShifts->map(function ($shift) {
+            // For multi-day shifts (start_date..end_date), the relevant calendar
+            // day for "today's" occurrence is today (in the shift's timezone),
+            // not the shift's original start_date — otherwise a worker joining
+            // partway through the date range would have all start/end time math
+            // anchored to a day that's already passed.
+            $tz = $shift->timezone ?: 'Europe/London';
+            try {
+                $occurrenceDate = now()->setTimezone($tz)->format('Y-m-d');
+            } catch (\Exception $e) {
+                $occurrenceDate = $shift->start_date;
+            }
+
             return [
                 'id' => $shift->id,
                 'site_id' => $shift->site_id,
                 'site_name' => $shift->site->name ?? '',
-                'site_address' => is_string($shift->site->address) 
-                    ? $shift->site->address 
+                'site_address' => is_string($shift->site->address)
+                    ? $shift->site->address
                     : ($shift->site->address['formatted_address'] ?? 'Address not available'),
                 'geofence' => $shift->site->geofence,
-                'date' => $shift->start_date,
+                'date' => $occurrenceDate,
                 'start_time' => $shift->start_time,
                 'end_time' => $shift->end_time,
                 'status' => $shift->status,
