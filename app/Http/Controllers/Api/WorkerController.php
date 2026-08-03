@@ -230,6 +230,29 @@ class WorkerController extends Controller
         return response()->json(['message' => 'Shift declined'], 200);
     }
 
+    // POST worker/check-calls — auto-create hourly check call
+    public function createAutoCheckCall(Request $request)
+    {
+        $workerId = auth()->id();
+
+        // Idempotent: skip if a pending one already exists
+        $existing = CheckCall::where('worker_id', $workerId)
+            ->where('status', 'pending')
+            ->first();
+
+        if ($existing) {
+            return response()->json(['message' => 'Pending check call already exists'], 200);
+        }
+
+        $call = CheckCall::create([
+            'worker_id'    => $workerId,
+            'status'       => 'pending',
+            'scheduled_at' => now(),
+        ]);
+
+        return response()->json(['message' => 'Check call created', 'id' => $call->id], 201);
+    }
+
     // GET worker/check-calls
     public function checkCalls(Request $request)
     {
@@ -272,11 +295,13 @@ class WorkerController extends Controller
 
         return response()->json(['alarms' => $alerts->map(function ($alert) {
             return [
-                'id' => $alert->id,
-                'type' => $alert->type ?? 'Emergency Alarm',
-                'status' => $alert->response_status ?? 'raised',
-                'timestamp' => $alert->created_at?->toISOString(),
-                'shift_id' => $alert->shift_id,
+                'id'          => $alert->id,
+                'type'        => $alert->type ?? 'Emergency',
+                'location'    => $alert->location ?? '',
+                'description' => $alert->description ?? '',
+                'status'      => $alert->response_status ?? 'raised',
+                'timestamp'   => $alert->created_at?->toISOString(),
+                'shift_id'    => $alert->shift_id,
             ];
         })], 200);
     }
@@ -293,9 +318,11 @@ class WorkerController extends Controller
         }
 
         $alert = ShiftAlert::create([
-            'shift_id' => $shiftId,
-            'user_id' => $userId,
-            'type' => $request->input('type', 'in-app-notification'),
+            'shift_id'    => $shiftId,
+            'user_id'     => $userId,
+            'type'        => $request->input('type', 'Emergency'),
+            'location'    => $request->input('location'),
+            'description' => $request->input('description'),
             'response_status' => null,
         ]);
 

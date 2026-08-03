@@ -350,6 +350,7 @@ Route::middleware(['auth:sanctum'])->prefix('worker')->group(function () {
     Route::post('shifts/{id}/accept', [WorkerController::class, 'acceptShift']);
     Route::post('shifts/{id}/decline', [WorkerController::class, 'declineShift']);
     Route::get('check-calls', [WorkerController::class, 'checkCalls']);
+    Route::post('check-calls', [WorkerController::class, 'createAutoCheckCall']);
     Route::post('check-calls/{id}/respond', [WorkerController::class, 'respondToCheckCall']);
     Route::get('alarms', [WorkerController::class, 'alarmHistory']);
     Route::post('alarms', [WorkerController::class, 'raiseAlarm']);

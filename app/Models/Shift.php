@@ -26,6 +26,10 @@ class Shift extends Model
         'created_by',
     ];
 
+    protected $attributes = [
+        'timezone' => 'Europe/London',
+    ];
+
     protected $casts = [
         'date' => 'date',
     ];

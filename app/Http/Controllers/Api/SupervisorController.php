@@ -346,11 +346,13 @@ class SupervisorController extends Controller
 
         return response()->json($alerts->map(function ($alert) {
             return [
-                'id' => $alert->id,
-                'type' => $alert->type,
-                'status' => $alert->response_status ?? 'raised',
-                'timestamp' => $alert->created_at,
-                'user_name' => $alert->user?->name ?? '',
+                'id'          => $alert->id,
+                'type'        => $alert->type ?? 'Emergency',
+                'location'    => $alert->location ?? '',
+                'description' => $alert->description ?? '',
+                'status'      => $alert->response_status ?? 'raised',
+                'timestamp'   => $alert->created_at,
+                'user_name'   => $alert->user?->name ?? '',
             ];
         }), 200);
     }
@@ -367,9 +369,11 @@ class SupervisorController extends Controller
         }
 
         $alert = ShiftAlert::create([
-            'shift_id' => $shiftId,
-            'user_id' => auth()->id(),
-            'type' => $request->input('type', 'in-app-notification'),
+            'shift_id'    => $shiftId,
+            'user_id'     => auth()->id(),
+            'type'        => $request->input('type', 'Emergency'),
+            'location'    => $request->input('location'),
+            'description' => $request->input('description'),
             'response_status' => null,
         ]);
 
@@ -385,11 +389,13 @@ class SupervisorController extends Controller
 
         return response()->json($alerts->map(function ($alert) {
             return [
-                'id'        => $alert->id,
-                'type'      => $alert->type,
-                'status'    => $alert->response_status ?? 'raised',
-                'timestamp' => $alert->created_at,
-                'user_name' => $alert->user?->name ?? '',
+                'id'          => $alert->id,
+                'type'        => $alert->type ?? 'Emergency',
+                'location'    => $alert->location ?? '',
+                'description' => $alert->description ?? '',
+                'status'      => $alert->response_status ?? 'raised',
+                'timestamp'   => $alert->created_at,
+                'user_name'   => $alert->user?->name ?? '',
             ];
         }), 200);
     }
@@ -412,7 +418,9 @@ class SupervisorController extends Controller
         $alert = ShiftAlert::create([
             'shift_id'        => $shiftId,
             'user_id'         => auth()->id(),
-            'type'            => $request->input('type', 'in-app-notification'),
+            'type'            => $request->input('type', 'Emergency'),
+            'location'        => $request->input('location'),
+            'description'     => $request->input('description'),
             'response_status' => null,
         ]);
 

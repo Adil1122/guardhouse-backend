@@ -10,6 +10,8 @@ class ShiftAlert extends Model
         'shift_id',
         'user_id',
         'type',
+        'location',
+        'description',
         'response_status',
         'response_timestamp',
     ];
