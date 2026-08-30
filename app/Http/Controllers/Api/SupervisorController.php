@@ -337,14 +337,19 @@ class SupervisorController extends Controller
     public function alarmHistory(Request $request)
     {
         $siteIds = $this->getSupervisorSiteIds(auth()->id());
-        $shiftIds = Shift::whereIn('site_id', $siteIds)->pluck('id');
 
-        $alerts = ShiftAlert::whereIn('shift_id', $shiftIds)
-            ->with(['user', 'shift'])
-            ->orderBy('created_at', 'desc')
-            ->get();
+        // If supervisor has assigned sites, show alarms from those shifts only.
+        // Otherwise fall back to all alarms so nothing is missed.
+        $query = ShiftAlert::with(['user', 'shift'])->orderBy('created_at', 'desc');
+        if (!empty($siteIds)) {
+            $shiftIds = Shift::whereIn('site_id', $siteIds)->pluck('id');
+            $query->whereIn('shift_id', $shiftIds);
+        }
+
+        $alerts = $query->get();
 
         return response()->json($alerts->map(function ($alert) {
+            $user = $alert->user;
             return [
                 'id'          => $alert->id,
                 'type'        => $alert->type ?? 'Emergency',
@@ -352,7 +357,7 @@ class SupervisorController extends Controller
                 'description' => $alert->description ?? '',
                 'status'      => $alert->response_status ?? 'raised',
                 'timestamp'   => $alert->created_at,
-                'user_name'   => $alert->user?->name ?? '',
+                'user_name'   => $user ? trim($user->first_name . ' ' . $user->last_name) : '',
             ];
         }), 200);
     }
@@ -388,6 +393,7 @@ class SupervisorController extends Controller
             ->get();
 
         return response()->json($alerts->map(function ($alert) {
+            $user = $alert->user;
             return [
                 'id'          => $alert->id,
                 'type'        => $alert->type ?? 'Emergency',
@@ -395,7 +401,7 @@ class SupervisorController extends Controller
                 'description' => $alert->description ?? '',
                 'status'      => $alert->response_status ?? 'raised',
                 'timestamp'   => $alert->created_at,
-                'user_name'   => $alert->user?->name ?? '',
+                'user_name'   => $user ? trim($user->first_name . ' ' . $user->last_name) : '',
             ];
         }), 200);
     }

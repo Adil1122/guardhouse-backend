@@ -160,6 +160,12 @@ class WorkerController extends Controller
                     'hours'      => $hoursStr,
                     'pay_note'   => $shift->payGroup?->name ?? 'Standard rate',
                     'status'     => $normalizedStatus,
+                    'start_at'   => ($shift->start_date && $shift->start_time)
+                        ? \Carbon\Carbon::parse(
+                            \Carbon\Carbon::parse($shift->start_date)->format('Y-m-d') . ' ' . $shift->start_time,
+                            $shift->timezone ?: 'Europe/London'
+                        )->toIso8601String()
+                        : null,
                 ];
             }),
         ], 200);
@@ -203,6 +209,12 @@ class WorkerController extends Controller
                     'hours'     => $hoursStr,
                     'pay_note'  => $shift->payGroup?->name ?? 'Standard rate',
                     'status'    => $shift->status,
+                    'start_at'  => ($shift->start_date && $shift->start_time)
+                        ? \Carbon\Carbon::parse(
+                            \Carbon\Carbon::parse($shift->start_date)->format('Y-m-d') . ' ' . $shift->start_time,
+                            $shift->timezone ?: 'Europe/London'
+                        )->toIso8601String()
+                        : null,
                 ];
             }),
         ], 200);
@@ -235,13 +247,19 @@ class WorkerController extends Controller
     {
         $workerId = auth()->id();
 
-        // Idempotent: skip if a pending one already exists
+        // Auto-expire any pending check calls older than 15 minutes → missed
+        CheckCall::where('worker_id', $workerId)
+            ->where('status', 'pending')
+            ->where('scheduled_at', '<', now()->subMinutes(15))
+            ->update(['status' => 'missed']);
+
+        // Idempotent: skip if a pending one already exists (created in this window)
         $existing = CheckCall::where('worker_id', $workerId)
             ->where('status', 'pending')
             ->first();
 
         if ($existing) {
-            return response()->json(['message' => 'Pending check call already exists'], 200);
+            return response()->json(['message' => 'Pending check call already exists', 'id' => $existing->id], 200);
         }
 
         $call = CheckCall::create([
@@ -285,15 +303,15 @@ class WorkerController extends Controller
         return response()->json(['message' => 'Check call responded'], 200);
     }
 
-    // GET worker/alarms
+    // GET worker/alarms — returns all alarms so workers are notified of admin-raised alarms
     public function alarmHistory(Request $request)
     {
-        $alerts = ShiftAlert::where('user_id', auth()->id())
-            ->with('shift')
+        $alerts = ShiftAlert::with(['user', 'shift'])
             ->orderBy('created_at', 'desc')
             ->get();
 
         return response()->json(['alarms' => $alerts->map(function ($alert) {
+            $user = $alert->user;
             return [
                 'id'          => $alert->id,
                 'type'        => $alert->type ?? 'Emergency',
@@ -302,6 +320,7 @@ class WorkerController extends Controller
                 'status'      => $alert->response_status ?? 'raised',
                 'timestamp'   => $alert->created_at?->toISOString(),
                 'shift_id'    => $alert->shift_id,
+                'user_name'   => $user ? trim($user->first_name . ' ' . $user->last_name) : '',
             ];
         })], 200);
     }
@@ -650,9 +669,10 @@ class WorkerController extends Controller
             $typeParts = explode('\\', $n->type ?? '');
             $shortType = strtolower(end($typeParts));
             $isAlert = str_contains($shortType, 'alert') || str_contains($shortType, 'alarm') || str_contains($shortType, 'welfare');
+            $isShift = str_contains($shortType, 'shift') || (is_array($n->data) && ($n->data['type'] ?? null) === 'shift');
             return [
                 'id'         => $n->id,
-                'type'       => $isAlert ? 'alert' : 'info',
+                'type'       => $isAlert ? 'alert' : ($isShift ? 'shift' : 'info'),
                 'title'      => $data['title'] ?? ($isAlert ? 'Alert' : 'Notification'),
                 'message'    => $data['message'] ?? $data['body'] ?? $data['content'] ?? 'You have a new notification',
                 'read'       => !is_null($n->read_at),

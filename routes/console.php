@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
 use App\Models\Shift;
 use App\Models\ShiftTimeclockLog;
+use App\Notifications\ShiftReminderNotification;
 use Carbon\Carbon;
 
 Artisan::command('inspire', function () {
@@ -50,3 +51,35 @@ Schedule::call(function () {
         \Illuminate\Support\Facades\Log::info("Auto-ended overdue shift #{$shift->id}");
     }
 })->everyMinute()->name('auto-end-overdue-shifts')->withoutOverlapping();
+
+// Send "shift starts soon" reminders to assigned workers (backup for the
+// on-device local reminder; covers app-killed / iOS-background cases).
+Schedule::call(function () {
+    $lead = (int) config('shifts.reminder_lead_minutes', 30);
+    $now = Carbon::now();
+
+    Shift::whereNotNull('assigned_to')
+        ->whereNull('reminder_sent_at')
+        ->whereNotNull('start_date')
+        ->whereNotNull('start_time')
+        ->whereIn('status', ['offered', 'created', 'confirmed', 'scheduled', 'awaiting'])
+        ->with(['assignedUser', 'site'])
+        ->get()
+        ->each(function ($shift) use ($lead, $now) {
+            $tz = $shift->timezone ?: 'Europe/London';
+            $start = Carbon::parse(
+                Carbon::parse($shift->start_date)->format('Y-m-d') . ' ' . $shift->start_time,
+                $tz
+            );
+
+            // Due when we're inside the lead window and the shift hasn't started yet.
+            if ($now->lt($start->copy()->subMinutes($lead)) || $now->gte($start)) {
+                return;
+            }
+
+            if ($shift->assignedUser) {
+                $shift->assignedUser->notify(new ShiftReminderNotification($shift));
+            }
+            $shift->forceFill(['reminder_sent_at' => $now])->saveQuietly();
+        });
+})->everyFiveMinutes()->name('shift-start-reminders')->withoutOverlapping();

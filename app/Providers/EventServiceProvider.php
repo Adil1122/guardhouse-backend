@@ -10,6 +10,9 @@ use Illuminate\Foundation\Support\Providers\EventServiceProvider as ServiceProvi
 
 class EventServiceProvider extends ServiceProvider
 {
+    // NOTE: this app relies on Laravel's event auto-discovery (listeners in
+    // app/Listeners implementing handle(Event) are wired automatically). Do not
+    // add shift listeners here or they will fire twice.
     protected $listen = [
         FormCreated::class => [
             HandleFormCreated::class,

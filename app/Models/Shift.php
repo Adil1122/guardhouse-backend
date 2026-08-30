@@ -4,6 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use App\Events\ShiftCreated;
+use App\Events\ShiftUpdated;
+use App\Events\ShiftDeleted;
 use App\Http\Resources\ShiftResource;
 
 class Shift extends Model
@@ -24,6 +26,7 @@ class Shift extends Model
         'questionnaire',
         'assigned_to',
         'created_by',
+        'reminder_sent_at',
     ];
 
     protected $attributes = [
@@ -32,6 +35,7 @@ class Shift extends Model
 
     protected $casts = [
         'date' => 'date',
+        'reminder_sent_at' => 'datetime',
     ];
 
     public static function getResource()
@@ -40,6 +44,8 @@ class Shift extends Model
     }
 
     public $createdEvent = ShiftCreated::class;
+    public $updatedEvent = ShiftUpdated::class;
+    public $deletedEvent = ShiftDeleted::class;
 
     public static function getValidationRules($action)
     {
